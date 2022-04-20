@@ -25,10 +25,10 @@ from .wikisql_formatter import get_squad_style_ans
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load data -----------------------------------------------------------------------------------------------
-def load_wikisql(path_wikisql, toy_model, toy_size, bert=False, no_w2i=False, no_hs_tok=False, aug=False):
+def load_wikisql(path_wikisql, toy_model, toy_size, bert=False, no_w2i=False, no_hs_tok=False, aug=False, agg_enhanced=0):
     # Get data
-    train_data, train_table = load_wikisql_data(path_wikisql, mode='train', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok, aug=aug)
-    dev_data, dev_table = load_wikisql_data(path_wikisql, mode='dev', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok)
+    train_data, train_table = load_wikisql_data(path_wikisql, mode='train', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok, aug=aug, agg_enhanced=agg_enhanced)
+    dev_data, dev_table = load_wikisql_data(path_wikisql, mode='dev', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok, agg_enhanced=agg_enhanced)
 
 
     # Get word vector
@@ -41,14 +41,14 @@ def load_wikisql(path_wikisql, toy_model, toy_size, bert=False, no_w2i=False, no
     return train_data, train_table, dev_data, dev_table, w2i, wemb
 
 
-def load_wikisql_data(path_wikisql, mode='train', toy_model=False, toy_size=10, no_hs_tok=False, aug=False):
+def load_wikisql_data(path_wikisql, mode='train', toy_model=False, toy_size=10, no_hs_tok=False, aug=False, agg_enhanced=0):
     """ Load training sets
     """
     if aug:
         mode = f"aug.{mode}"
         print('Augmented data is loaded!')
 
-    path_sql = os.path.join(path_wikisql, mode+'_knowledge.jsonl')
+    path_sql = os.path.join(path_wikisql, mode+'_knowledge_agg_enhanced.jsonl') if agg_enhanced==1 else os.path.join(path_wikisql, mode+'_knowledge.jsonl')
     if no_hs_tok:
         path_table = os.path.join(path_wikisql, mode + '.tables.jsonl')
     else:
@@ -56,7 +56,7 @@ def load_wikisql_data(path_wikisql, mode='train', toy_model=False, toy_size=10, 
 
     data = []
     table = {}
-    with open(path_sql) as f:
+    with open(path_sql, encoding='utf-8') as f:
         for idx, line in enumerate(f):
             if toy_model and idx >= toy_size:
                 break
@@ -94,7 +94,7 @@ def get_loader_wikisql(data_train, data_dev, bS, shuffle_train=True, shuffle_dev
         batch_size=bS,
         dataset=data_train,
         shuffle=shuffle_train,
-        num_workers=4,
+        # num_workers=4, # Comment it if using pytorch-cpu on windows
         collate_fn=lambda x: x  # now dictionary values are not merged!
     )
 
@@ -102,7 +102,7 @@ def get_loader_wikisql(data_train, data_dev, bS, shuffle_train=True, shuffle_dev
         batch_size=bS,
         dataset=data_dev,
         shuffle=shuffle_dev,
-        num_workers=4,
+        # num_workers=4, # Comment it if using pytorch-cpu on windows
         collate_fn=lambda x: x  # now dictionary values are not merged!
     )
 
@@ -977,11 +977,10 @@ def get_wemb_bert_agg(bert_config, model_bert, tokenizer, nlu_t, hds, max_seq_le
            nlu_tt, t_to_tt_idx, tt_to_t_idx
 
 def get_wemb_bert(bert_config, model_bert, tokenizer, nlu_t, hds, max_seq_length, num_out_layers_n=1, num_out_layers_h=1):
-
     # get contextual output of all tokens from bert
     all_encoder_layer, pooled_output, tokens, i_nlu, i_hds,\
     l_n, l_hpu, l_hs, \
-    nlu_tt, t_to_tt_idx, tt_to_t_idx = get_bert_output(model_bert, tokenizer, nlu_t, hds, max_seq_length)
+    nlu_tt, t_to_tt_idx, tt_to_t_idx = get_bert_output(model_bert, tokenizer, nlu_t, hds, max_seq_length) # Time comsuming
     # all_encoder_layer: BERT outputs from all layers.
     # pooled_output: output of [CLS] vec.
     # tokens: BERT intput tokens
@@ -1073,7 +1072,7 @@ def pred_sa(s_sa):
     """
     return: [ pr_wc1_i, pr_wc2_i, ...]
     """
-    # get g_num
+    # 选取score最大的作为预测值
     pr_sa = []
     for s_sa1 in s_sa:
         pr_sa.append(s_sa1.argmax().item())

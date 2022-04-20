@@ -112,13 +112,13 @@ def get_data(path_wikisql, args):
 
 #engine_train = DBEngine("train.db")
 #engine_dev = DBEngine("dev.db")
-train_data, train_table, dev_data, dev_table, train_loader, dev_loader = get_data("./", config)
+train_data, train_table, dev_data, dev_table, train_loader, dev_loader = get_data("./data_and_model", config)
 count = 0
 count_agg_0 = 0
 count_agg_not_0 = 0
 
 tokenizer = tokenization.FullTokenizer(
-        vocab_file="./vocab_uncased_L-12_H-768_A-12.txt", do_lower_case=True)
+        vocab_file="./data_and_model/vocab_uncased_L-12_H-768_A-12.txt", do_lower_case=True)
 
 
 def contains2(small_str,big_str):
@@ -143,8 +143,10 @@ def contains(small_list,big_list):
                 if ii == len(small_list)-1:
                     return result,i,i+ii
     return result,-1,-1
+
 import re
 re_ = re.compile(' ')
+
 def process(data,table,output_name):
   final_all = []
   badcase = 0
@@ -264,8 +266,10 @@ def process(data,table,output_name):
     json.dump(line, f)
     f.write('\n')
   f.close()
-process(train_data,train_table,"train_knowledge.jsonl")
-process(dev_data,dev_table,"dev_knowledge.jsonl")
+
+
+process(train_data,train_table,"./data_and_model/train_knowledge.jsonl")
+process(dev_data,dev_table,"./data_and_model/dev_knowledge.jsonl")
 
 
 

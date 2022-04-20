@@ -6,7 +6,8 @@
 
 import os, sys, argparse, re, json
 
-from matplotlib.pylab import *
+# from matplotlib.pylab import *
+import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
@@ -26,7 +27,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def construct_hyper_param(parser):
-    parser.add_argument("--do_train", default=True)
+    parser.add_argument("--do_train", default=1, type=int)
     parser.add_argument('--do_infer', default=False)
     parser.add_argument('--infer_loop', default=False)
 
@@ -36,7 +37,7 @@ def construct_hyper_param(parser):
                         default=True,
                         help="If present, BERT is trained.")
     
-    parser.add_argument('--tepoch', default=200, type=int)
+    parser.add_argument('--tepoch', default=2, type=int)
     parser.add_argument("--bS", default=8, type=int,
                         help="Batch size")
     parser.add_argument("--accumulate_gradients", default=1, type=int,
@@ -74,12 +75,16 @@ def construct_hyper_param(parser):
 
     # 1.4 Execution-guided decoding beam-size. It is used only in test.py
     parser.add_argument('--EG',
-                        default=False,
+                        default=0, type=int,
                         help="If present, Execution guided decoding is used in test.")
     parser.add_argument('--beam_size',
                         type=int,
                         default=4,
                         help="The size of beam for smart decoding")
+    # 1.5 Limit dataset size
+    parser.add_argument('--train_size', type=int, default=-1, help="The size of train dataset, -1 for whole dataset")
+    parser.add_argument('--test_size', type=int, default=-1, help="The size of test dataset, -1 for whole dataset")
+    parser.add_argument('--agg_enhanced', type=int, default=0, help="Whether to enhance agg attention")
 
     args = parser.parse_args()
 
@@ -133,7 +138,7 @@ def get_bert(BERT_PT_PATH, bert_type, do_lower_case, no_pretraining):
     return model_bert, tokenizer, bert_config
 
 
-def get_opt(model, model_bert, fine_tune):
+def get_opt(args, model, model_bert, fine_tune):
     if fine_tune:
         opt = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
                                lr=args.lr, weight_decay=0)
@@ -159,8 +164,7 @@ def get_models(args, BERT_PT_PATH, trained=False, path_model_bert=None, path_mod
     print(f"Fine-tune BERT: {args.fine_tune}")
 
     # Get BERT
-    model_bert, tokenizer, bert_config = get_bert(BERT_PT_PATH, args.bert_type, args.do_lower_case,
-                                                  args.no_pretraining)
+    model_bert, tokenizer, bert_config = get_bert(BERT_PT_PATH, args.bert_type, args.do_lower_case, args.no_pretraining)
     args.iS = bert_config.hidden_size * args.num_target_layers  # Seq-to-SQL input vector dimenstion
 
     # Get Seq-to-SQL
@@ -186,27 +190,48 @@ def get_models(args, BERT_PT_PATH, trained=False, path_model_bert=None, path_mod
         model_bert.load_state_dict(res['model_bert'])
         model_bert.to(device)
 
+        """
         if torch.cuda.is_available():
             res = torch.load(path_model)
         else:
             res = torch.load(path_model, map_location='cpu')
 
         model.load_state_dict(res['model'])
+        """
+        if torch.cuda.is_available():
+            res_SCP = torch.load('./model_SCP_best.pt')
+            res_SAP = torch.load('./model_SAP_best.pt')
+            res_WNP = torch.load('./model_WNP_best.pt')
+            res_WCP = torch.load('./model_WCP_best.pt')
+            res_WOP = torch.load('./model_WOP_best.pt')
+            res_WVP = torch.load('./model_WVP_best.pt')
+        else:
+            res_SCP = torch.load('./model_SCP_best.pt', map_location='cpu')
+            res_SAP = torch.load('./model_SAP_best.pt', map_location='cpu')
+            res_WNP = torch.load('./model_WNP_best.pt', map_location='cpu')
+            res_WCP = torch.load('./model_WCP_best.pt', map_location='cpu')
+            res_WOP = torch.load('./model_WOP_best.pt', map_location='cpu')
+            res_WVP = torch.load('./model_WVP_best.pt', map_location='cpu')
+        model.scp.load_state_dict(res_SCP['model'])
+        model.sap.load_state_dict(res_SAP['model'])
+        model.wnp.load_state_dict(res_WNP['model'])
+        model.wcp.load_state_dict(res_WCP['model'])
+        model.wop.load_state_dict(res_WOP['model'])
+        model.wvp.load_state_dict(res_WVP['model'])
 
     return model, model_bert, tokenizer, bert_config
 
 
 def get_data(path_wikisql, args):
-    train_data, train_table, dev_data, dev_table, _, _ = load_wikisql(path_wikisql, args.toy_model, args.toy_size,
-                                                                      no_w2i=True, no_hs_tok=True)
+    train_data, train_table, dev_data, dev_table, _, _ = load_wikisql(path_wikisql, args.toy_model, args.toy_size, no_w2i=True, no_hs_tok=True, agg_enhanced=args.agg_enhanced)
     train_loader, dev_loader = get_loader_wikisql(train_data, dev_data, args.bS, shuffle_train=True)
 
-    return train_data, train_table, dev_data, dev_table, train_loader, dev_loader
+    return train_table, dev_table, train_loader, dev_loader
 
 
 def train(train_loader, train_table, model, model_bert, opt, bert_config, tokenizer,
           max_seq_length, num_target_layers, accumulate_gradients=1, check_grad=True,
-          st_pos=0, opt_bert=None, path_db=None, dset_name='train'):
+          st_pos=0, opt_bert=None, path_db=None, dset_name='train', train_size=-1, adaptiveLr=0):
     model.train()
     model_bert.train()
 
@@ -225,7 +250,12 @@ def train(train_loader, train_table, model, model_bert, opt, bert_config, tokeni
     # Engine for SQL querying.
     engine = DBEngine(os.path.join(path_db, f"{dset_name}.db"))
 
-    for iB, t in enumerate(train_loader):
+    train_dataset = list(enumerate(train_loader)) if train_size == -1 else list(enumerate(train_loader))[0:train_size] # train_loader 加载的数据集len()=7045
+    loss_last = 10000
+
+    for iB in range(0, len(train_dataset)):
+        # 耗时高的两个操作: get_wemb_bert(), loss.backward()
+        t = train_dataset[iB][1]
         cnt += len(t)
 
         if cnt < st_pos:
@@ -233,15 +263,16 @@ def train(train_loader, train_table, model, model_bert, opt, bert_config, tokeni
 
         # Get fields
         nlu, nlu_t, sql_i, sql_q, sql_t, tb, hs_t, hds = get_fields(t, train_table, no_hs_t=True, no_sql_t=True)
-        # nlu  : natural language utterance
-        # nlu_t: tokenized nlu
-        # sql_i: canonical form of SQL query
-        # sql_q: full SQL query text. Not used.
+        # nlu  : natural language utterance | 自然语言表述
+        # nlu_t: tokenized nlu | 分词后的自然语言表述
+        # sql_i: canonical form of SQL query | SQL查询语句的规范形式
+        # sql_q: full SQL query text. Not used | 未使用
         # sql_t: tokenized SQL query
-        # tb   : table
-        # hs_t : tokenized headers. Not used.
+        # tb   : table | 整个表格
+        # hs_t : tokenized headers. Not used. | 未使用
 
         g_sc, g_sa, g_wn, g_wc, g_wo, g_wv = get_g(sql_i)
+        # g_sc : 'sel', g_sa : 'agg', len of 'conds'
         # get ground truth where-value index under CoreNLP tokenization scheme. It's done already on trainset.
         g_wvi_corenlp = get_g_wvi_corenlp(t)
 
@@ -264,7 +295,8 @@ def train(train_loader, train_table, model, model_bert, opt, bert_config, tokeni
             # During test, that example considered as wrongly answered.
             # e.g. train: 32.
             continue
-
+        
+        # BERT-RULE: 加入了header知识和table content和table header
         knowledge = []
         for k in t:
             if "bertindex_knowledge" in k:
@@ -415,7 +447,7 @@ def report_detail(hds, nlu,
 def test(data_loader, data_table, model, model_bert, bert_config, tokenizer,
          max_seq_length,
          num_target_layers, detail=False, st_pos=0, cnt_tot=1, EG=False, beam_size=4,
-         path_db=None, dset_name='test'):
+         path_db=None, dset_name='test', test_size=-1):
     model.eval()
     model_bert.eval()
 
@@ -435,8 +467,10 @@ def test(data_loader, data_table, model, model_bert, bert_config, tokenizer,
 
     engine = DBEngine(os.path.join(path_db, f"{dset_name}.db"))
     results = []
-    for iB, t in enumerate(data_loader):
 
+    test_dataset = list(enumerate(data_loader)) if test_size == -1 else list(enumerate(data_loader))[0:test_size]
+    for iB in range(0, len(test_dataset)):
+        t = test_dataset[iB][1]
         cnt += len(t)
         if cnt < st_pos:
             continue
@@ -482,7 +516,7 @@ def test(data_loader, data_table, model, model_bert, bert_config, tokenizer,
 
         # model specific part
         # score
-        if not EG:
+        if EG == 0:
             # No Execution guided decoding
             s_sc, s_sa, s_wn, s_wc, s_wo, s_wv = model(wemb_n, l_n, wemb_h, l_hpu, l_hs,
                                                        knowledge=knowledge,
@@ -491,7 +525,7 @@ def test(data_loader, data_table, model, model_bert, bert_config, tokenizer,
             # get loss & step
             loss = Loss_sw_se(s_sc, s_sa, s_wn, s_wc, s_wo, s_wv, g_sc, g_sa, g_wn, g_wc, g_wo, g_wvi)
 
-            # prediction
+            # 预测生成的SEL, AGG, WHERE_COL, WHERE_OP, WHERE_VAL
             pr_sc, pr_sa, pr_wn, pr_wc, pr_wo, pr_wvi = pred_sw_se(s_sc, s_sa, s_wn, s_wc, s_wo, s_wv, )
             pr_wv_str, pr_wv_str_wp = convert_pr_wvi_to_string(pr_wvi, nlu_t, nlu_tt, tt_to_t_idx, nlu)
             # g_sql_i = generate_sql_i(g_sc, g_sa, g_wn, g_wc, g_wo, g_wv_str, nlu)
@@ -664,136 +698,47 @@ def infer(nlu1,
 
 def print_result(epoch, acc, dname):
     ave_loss, acc_sc, acc_sa, acc_wn, acc_wc, acc_wo, acc_wvi, acc_wv, acc_lx, acc_x = acc
-
     print(f'{dname} results ------------')
     print(
         f" Epoch: {epoch}, ave loss: {ave_loss}, acc_sc: {acc_sc:.3f}, acc_sa: {acc_sa:.3f}, acc_wn: {acc_wn:.3f}, \
-        acc_wc: {acc_wc:.3f}, acc_wo: {acc_wo:.3f}, acc_wvi: {acc_wvi:.3f}, acc_wv: {acc_wv:.3f}, acc_lx: {acc_lx:.3f}, acc_x: {acc_x:.3f}"
+        acc_wc: {acc_wc:.3f}, acc_wo: {acc_wo:.3f}, acc_wv: {acc_wv:.3f}, acc_lx: {acc_lx:.3f}, acc_x: {acc_x:.3f}"
     )
 
+def save_epoch_for_plot(results_for_plot, acc_train, acc_dev):
+    res_dict = {}
+    ave_loss, acc_sc, acc_sa, acc_wn, acc_wc, acc_wo, acc_wvi, acc_wv, acc_lx, acc_x = acc_train
+    res_dict['train'] = {'ave_loss':ave_loss, 'acc_sc':acc_sc, 'acc_sa':acc_sa, 'acc_wn':acc_wn, 'acc_wc':acc_wc, 
+                         'acc_wo':acc_wo, 'acc_wv':acc_wv, 'acc_lx':acc_lx, 'acc_x':acc_x}
+    ave_loss, acc_sc, acc_sa, acc_wn, acc_wc, acc_wo, acc_wvi, acc_wv, acc_lx, acc_x = acc_dev
+    res_dict['dev'] = {'ave_loss':ave_loss, 'acc_sc':acc_sc, 'acc_sa':acc_sa, 'acc_wn':acc_wn, 'acc_wc':acc_wc, 
+                         'acc_wo':acc_wo, 'acc_wv':acc_wv, 'acc_lx':acc_lx, 'acc_x':acc_x}
+    results_for_plot.append(res_dict)
+    with open('res/results_for_plot.json', 'w') as f:
+        json.dump(results_for_plot, f)
 
-if __name__ == '__main__':
-
-    ## 1. Hyper parameters
-    parser = argparse.ArgumentParser()
-    args = construct_hyper_param(parser)
-
-    ## 2. Paths
-    path_h = './data_and_model'  # '/home/wonseok'
-    path_wikisql = './data_and_model'  # os.path.join(path_h, 'data', 'wikisql_tok')
-    BERT_PT_PATH = path_wikisql
-
-    path_save_for_evaluation = './'
-
-    ## 3. Load data
-
-    train_data, train_table, dev_data, dev_table, train_loader, dev_loader =\
-        get_data(path_wikisql, args)
-    # test_data, test_table = load_wikisql_data(path_wikisql, mode='test', toy_model=args.toy_model, toy_size=args.toy_size, no_hs_tok=True)
-    # test_loader = torch.utils.data.DataLoader(
-    #     batch_size=args.bS,
-    #     dataset=test_data,
-    #     shuffle=False,
-    #     num_workers=4,
-    #     collate_fn=lambda x: x  # now dictionary values are not merged!
-    # )
-    ## 4. Build & Load models
-    if not args.trained:
-        model, model_bert, tokenizer, bert_config = get_models(args, BERT_PT_PATH)
-    else:
-        # To start from the pre-trained models, un-comment following lines.
-        path_model_bert = './model_bert_best.pt'
-        path_model = './model_best.pt'
-        model, model_bert, tokenizer, bert_config = get_models(args, BERT_PT_PATH, trained=True,
-                                                               path_model_bert=path_model_bert, path_model=path_model)
-
-    ## 5. Get optimizers
-    if args.do_train:
-        opt, opt_bert = get_opt(model, model_bert, args.fine_tune)
-
-        ## 6. Train
-        acc_lx_t_best = -1
-        epoch_best = -1
-        for epoch in range(args.tepoch):
-            # train
-            acc_train=None
-            acc_train, aux_out_train = train(train_loader,
-                                             train_table,
-                                             model,
-                                             model_bert,
-                                             opt,
-                                             bert_config,
-                                             tokenizer,
-                                             args.max_seq_length,
-                                             args.num_target_layers,
-                                             args.accumulate_gradients,
-                                             opt_bert=opt_bert,
-                                             st_pos=0,
-                                             path_db=path_wikisql,
-                                             dset_name='train')
-
-            # check DEV
-            with torch.no_grad():
-                acc_dev, results_dev, cnt_list = test(dev_loader,
-                                                      dev_table,
-                                                      model,
-                                                      model_bert,
-                                                      bert_config,
-                                                      tokenizer,
-                                                      args.max_seq_length,
-                                                      args.num_target_layers,
-                                                      detail=False,
-                                                      path_db=path_wikisql,
-                                                      st_pos=0,
-                                                      dset_name='dev', EG=args.EG)
-            if acc_train!=None:
-              print_result(epoch, acc_train, 'train')
-            print_result(epoch, acc_dev, 'dev')
-
-            # save results for the official evaluation
-            save_for_evaluation(path_save_for_evaluation, results_dev, 'dev')
-
-            # save best model
-            # Based on Dev Set logical accuracy lx
-            acc_lx_t = acc_dev[-2]
-            if acc_lx_t > acc_lx_t_best:
-                acc_lx_t_best = acc_lx_t
-                epoch_best = epoch
-                # save best model
-                state = {'model': model.state_dict()}
-                torch.save(state, os.path.join('.', 'model_best.pt'))
-
-                state = {'model_bert': model_bert.state_dict()}
-                torch.save(state, os.path.join('.', 'model_bert_best.pt'))
-
-            print(f" Best Dev lx acc: {acc_lx_t_best} at epoch: {epoch_best}")
-
-    if args.do_infer:
-        # To use recent corenlp: https://github.com/stanfordnlp/python-stanford-corenlp
-        # 1. pip install stanford-corenlp
-        # 2. download java crsion
-        # 3. export CORENLP_HOME=/Users/wonseok/utils/stanford-corenlp-full-2018-10-05
-
-        # from stanza.nlp.corenlp import CoreNLPClient
-        # client = CoreNLPClient(server='http://localhost:9000', default_annotators='ssplit,tokenize'.split(','))
-
-        import corenlp
-
-        client = corenlp.CoreNLPClient(annotators='ssplit,tokenize'.split(','))
-
-        nlu1 = "Which company have more than 100 employees?"
-        path_db = './data_and_model'
-        db_name = 'ctable'
-        data_table = load_jsonl('./data_and_model/ctable.tables.jsonl')
-        table_name = 'ftable1'
-        n_Q = 100000 if args.infer_loop else 1
-        for i in range(n_Q):
-            if n_Q > 1:
-                nlu1 = input('Type question: ')
-            pr_sql_i, pr_ans = infer(
-                nlu1,
-                table_name, data_table, path_db, db_name,
-                model, model_bert, bert_config, max_seq_length=args.max_seq_length,
-                num_target_layers=args.num_target_layers,
-                beam_size=1, show_table=False, show_answer_only=False
-            )
+def save_best_model(acc_cur, acc_best, model, model_bert):
+    acc_t = acc_cur[1:6] + [acc_cur[7]]
+    for i, acc in enumerate(acc_t):
+        if acc > acc_best[i]: # submodel reach best
+            acc_best[i] = acc
+            if i == 0: # SCP
+                state = {'model': model.scp.state_dict()}
+                torch.save(state, os.path.join('.', 'model_SCP_best.pt'))
+            elif i == 1: # SAP
+                state = {'model': model.sap.state_dict()}
+                torch.save(state, os.path.join('.', 'model_SAP_best.pt'))
+            elif i == 2: # WNP
+                state = {'model': model.wnp.state_dict()}
+                torch.save(state, os.path.join('.', 'model_WNP_best.pt'))
+            elif i == 3: # WCP
+                state = {'model': model.wcp.state_dict()}
+                torch.save(state, os.path.join('.', 'model_WCP_best.pt'))
+            elif i == 4: # WOP
+                state = {'model': model.wop.state_dict()}
+                torch.save(state, os.path.join('.', 'model_WOP_best.pt'))
+            else:        # WVP
+                state = {'model': model.wvp.state_dict()}
+                torch.save(state, os.path.join('.', 'model_WVP_best.pt'))
+        else:
+            continue
+    return acc_best

@@ -1,0 +1,9 @@
+*__pycache__*/
+.vscode/*
+fig/*
+*__MACOSX*/
+data_and_model/*
+*.pt
+res/*
+results_for_plot.json
+results_dev.jsonl
