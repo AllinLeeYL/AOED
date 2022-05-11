@@ -29,7 +29,7 @@ def load_wikisql(path_wikisql, toy_model, toy_size, bert=False, no_w2i=False, no
     # Get data
     train_data, train_table = load_wikisql_data(path_wikisql, mode='train', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok, aug=aug, agg_enhanced=agg_enhanced)
     dev_data, dev_table = load_wikisql_data(path_wikisql, mode='dev', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok, agg_enhanced=agg_enhanced)
-
+    test_data, test_table = load_wikisql_data(path_wikisql, mode='test', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok, agg_enhanced=agg_enhanced)
 
     # Get word vector
     if no_w2i:
@@ -37,8 +37,8 @@ def load_wikisql(path_wikisql, toy_model, toy_size, bert=False, no_w2i=False, no
     else:
         w2i, wemb = load_w2i_wemb(path_wikisql, bert)
 
-
-    return train_data, train_table, dev_data, dev_table, w2i, wemb
+    return train_data, train_table, test_data, test_table, w2i, wemb
+    # return train_data, train_table, dev_data, dev_table, w2i, wemb
 
 
 def load_wikisql_data(path_wikisql, mode='train', toy_model=False, toy_size=10, no_hs_tok=False, aug=False, agg_enhanced=0):

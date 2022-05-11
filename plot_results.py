@@ -39,10 +39,12 @@ def plot_results(results):
     plt.plot([i+1 for i in range(len(acc_x_train))], acc_x_train, '--', label='execution (train)')
     plt.plot([i+1 for i in range(len(acc_lx_dev))], acc_lx_dev, '--', label='logic form (dev)')
     plt.plot([i+1 for i in range(len(acc_x_dev))], acc_x_dev, '--', label='execution (dev)')
-    plt.annotate(xy=(argmax(acc_lx_dev), max(acc_lx_dev)),
-                 text='epoch:'+str(argmax(acc_lx_dev) + 1)+'\nacc_lx:'+str(round(max(acc_lx_dev), 3)) )
-    plt.annotate(xy=(argmax(acc_x_dev), max(acc_x_dev)), 
-                 text='epoch:'+str(argmax(acc_x_dev) + 1)+'\nacc_x:'+str(round(max(acc_x_dev), 3)) )
+    lx_idx = argmax(acc_lx_dev)
+    x_idx = argmax(acc_x_dev)
+    plt.annotate(xy=(lx_idx, max(acc_lx_dev)),
+                 text='epoch:'+str(lx_idx + 1)+'\nacc_lx:'+str(round(acc_lx_dev[lx_idx], 3)) )
+    plt.annotate(xy=(x_idx, max(acc_x_dev)), 
+                 text='epoch:'+str(x_idx + 1)+'\nacc_x:'+str(round(acc_x_dev[x_idx], 3)) )
     plt.legend()
     plt.savefig('fig/acc.png')
 
@@ -68,11 +70,16 @@ def plot_results(results):
     plt.legend()
     plt.savefig('fig/acc_detial.png')
     # SAVE
-    return
+    return lx_idx, x_idx
+
+def print_best(results, lx_idx, x_idx):
+    print(results[lx_idx]['dev'])
+    print(results[x_idx]['dev'])
 
 def plot_one_res():
     results = load_results()
-    plot_results(results)
+    lx_idx, x_idx = plot_results(results)
+    print_best(results, lx_idx, x_idx)
 
 def plot_acc_detail_compare():
     with open(sys.argv[1], 'r') as f:
@@ -107,20 +114,31 @@ def plot_acc_detail_compare():
     plt.savefig('fig/comparison.png')
     return
 
-def plot_one_pie(name, toks, total):
-    t1 = [tok[1] for tok in toks]
-    x = [total - sum(t1)] + t1
-    labels = [''] + [tok[0] for tok in toks]
-    fig = plt.figure(figsize=(6, 6), dpi=144)
-    # fig.subplots_adjust(left=0.02, right=0.98, hspace=0.2, wspace=0)
-    # plt.subplot(1, 1, 1)
-    # plt.title(name)
-    plt.pie(x=x, labels=labels, autopct='%.1f%%')
-    plt.savefig('fig/agg_rl_stcs_' + name + '.png')
+def plot_bar0(agg_toks, NLQ_nums):
+    fig = plt.figure(figsize=(10, 4), dpi=144)
+    # percentage of NLQs with special tok
+    c0 = 0
+    x_all = []
+    x_label = []
+    for i in range(1, len(agg_ops)):
+        height = [tok[1] / NLQ_nums[i] * 100 for tok in agg_toks[i]]
+        labels = [tok[0] for tok in agg_toks[i]]
+        width = 0.6
+        x = [c0 + i for i in range(len(height))]
+        plt.bar(x=x, height=height, width=width, label=agg_ops[i])
+        for j in range(len(labels)):
+            plt.annotate(xy=(c0 + j - width / 2, height[j]), text=str(round(height[j], 1)) + '%')
+        c0 += len(height)
+        x_all += x
+        x_label += labels
+    # possibility of AGG when speical tok in NLQ
+    plt.xticks(x_all, x_label)
+    plt.legend()
+    plt.savefig('fig/agg_rl_stcs_freq.png')
 
 def plot_bar(agg_toks):
     agg_toks = agg_toks[1:]
-    fig = plt.figure(figsize=(12, 12), dpi=144)
+    fig = plt.figure(figsize=(12, 6), dpi=144)
     width = 0.8
     x_cur = 0
     x_all = []
@@ -145,14 +163,11 @@ def plot_stcs():
         res_path = sys.argv[1]
     with open(res_path, 'r') as f:
         [agg_toks, nums, NLQ_nums] = json.load(f)
-    # percentage of NLQs with special tok
-    for i in range(1, len(agg_ops)):
-        plot_one_pie(agg_ops[i], agg_toks[i], NLQ_nums[i])
-    # possibility of AGG when speical tok in NLQ
+    plot_bar0(agg_toks, NLQ_nums)
     plot_bar(agg_toks)
     return
 
 if __name__ == "__main__":
-    # plot_one_res()
+    plot_one_res()
     # plot_acc_detail_compare()
-    plot_stcs()
+    # plot_stcs()

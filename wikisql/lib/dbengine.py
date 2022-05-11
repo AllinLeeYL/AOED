@@ -1,7 +1,7 @@
 import records
 import re
 from babel.numbers import parse_decimal, NumberFormatError
-from wikisql.lib.query import Query
+from .query import Query
 
 # Jan 3, 2019. Wonseok modify the lib. path
 

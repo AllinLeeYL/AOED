@@ -27,7 +27,10 @@ class DBEngine:
         if not table_id.startswith('table'):
             table_id = 'table_{}'.format(table_id.replace('-', '_'))
         # Modified Begin
-        table_tmp_var = self.db.query('SELECT sql from sqlite_master WHERE tbl_name = :name', name=table_id).all()[0].as_dict()
+        debugt0 = self.db.query('SELECT sql from sqlite_master WHERE tbl_name = :name', name=table_id)
+        debugt1 = debugt0.all()
+        table_tmp_var = debugt1[0].as_dict()
+        # table_tmp_var = self.db.query('SELECT sql from sqlite_master WHERE tbl_name = :name', name=table_id).all()[0].as_dict()
         table_info = table_tmp_var["sql"].replace('\n','')
         # Modified End
         schema_str = schema_re.findall(table_info)[0]

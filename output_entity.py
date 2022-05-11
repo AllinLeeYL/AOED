@@ -17,7 +17,7 @@ config["accumulate_gradients"] = 2
 config["EG"] = False
 
 
-def get_loader_wikisql(data_train, data_dev, bS, shuffle_train=True, shuffle_dev=False):
+def get_loader_wikisql(data_train, data_dev, data_test, bS, shuffle_train=True, shuffle_dev=False, shuffle_test=False):
     train_loader = torch.utils.data.DataLoader(
         batch_size=bS,
         dataset=data_train,
@@ -34,7 +34,15 @@ def get_loader_wikisql(data_train, data_dev, bS, shuffle_train=True, shuffle_dev
         collate_fn=lambda x: x  # now dictionary values are not merged!
     )
 
-    return train_loader, dev_loader
+    test_loader = torch.utils.data.DataLoader(
+        batch_size=bS,
+        dataset=data_test,
+        shuffle=shuffle_test,
+        num_workers=4,
+        collate_fn=lambda x: x  # now dictionary values are not merged!
+    )
+
+    return train_loader, dev_loader, test_loader
 
 def load_wikisql_data(path_wikisql, mode='train', toy_model=False, toy_size=10, no_hs_tok=False, aug=False):
     """ Load training sets
@@ -89,7 +97,7 @@ def load_wikisql(path_wikisql, toy_model, toy_size, bert=False, no_w2i=False, no
     # Get data
     train_data, train_table = load_wikisql_data(path_wikisql, mode='train', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok, aug=aug)
     dev_data, dev_table = load_wikisql_data(path_wikisql, mode='dev', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok)
-
+    test_data, test_table = load_wikisql_data(path_wikisql, mode='test', toy_model=toy_model, toy_size=toy_size, no_hs_tok=no_hs_tok)
 
     # Get word vector
     if no_w2i:
@@ -98,21 +106,21 @@ def load_wikisql(path_wikisql, toy_model, toy_size, bert=False, no_w2i=False, no
         w2i, wemb = load_w2i_wemb(path_wikisql, bert)
 
 
-    return train_data, train_table, dev_data, dev_table, w2i, wemb
+    return train_data, train_table, dev_data, dev_table, test_data, test_table
 
 def get_data(path_wikisql, args):
-    train_data, train_table, dev_data, dev_table, _, _ = load_wikisql(path_wikisql,
+    train_data, train_table, dev_data, dev_table, test_data, test_table = load_wikisql(path_wikisql,
                                                                       args["toy_model"],
                                                                       args["toy_size"],
                                                                       no_w2i=True,
                                                                       no_hs_tok=True)
-    train_loader, dev_loader = get_loader_wikisql(train_data, dev_data, args["batch_size"], shuffle_train=True)
+    train_loader, dev_loader, test_loader = get_loader_wikisql(train_data, dev_data, test_data, args["batch_size"], shuffle_train=True)
 
-    return train_data, train_table, dev_data, dev_table, train_loader, dev_loader
+    return train_data, train_table, dev_data, dev_table, test_data, test_table, train_loader, dev_loader, test_loader
 
 #engine_train = DBEngine("train.db")
 #engine_dev = DBEngine("dev.db")
-train_data, train_table, dev_data, dev_table, train_loader, dev_loader = get_data("./data_and_model", config)
+train_data, train_table, dev_data, dev_table, test_data, test_table, train_loader, dev_loader, test_loader = get_data("./data_and_model", config)
 count = 0
 count_agg_0 = 0
 count_agg_not_0 = 0
@@ -270,6 +278,7 @@ def process(data,table,output_name):
 
 process(train_data,train_table,"./data_and_model/train_knowledge.jsonl")
 process(dev_data,dev_table,"./data_and_model/dev_knowledge.jsonl")
+process(test_data,test_table,"./data_and_model/test_knowledge.jsonl")
 
 
 

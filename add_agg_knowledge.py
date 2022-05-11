@@ -1,26 +1,15 @@
-import encodings
-import enum
-import json, os, sys, jsonlines, re
+import json, sys, jsonlines, re
+# import nltk
 from functions import get_bert
 from sqlova.utils.utils_wikisql import load_wikisql_data
 
+# nltk.download('punkt')
+
 prog = re.compile('##.*')
-prog_est = re.compile('.*est$')
+prog_est = re.compile('(.*est$)')
+prog_hodr = re.compile('(.*est$)|(least)|(most)')
 
 agg_ops = ['', 'MAX', 'MIN', 'COUNT', 'SUM', 'AVG']
-"""
-agg_texts = [[],\
-             ['maximum'],\
-             ['minimum', 'the lowest', 'the least'],\
-             ['count', 'number of', 'how many'],\
-             ['total', 'how many'],\
-             ['average']]
-agg_headers = [[],\
-               ['maximum', 'max'],\
-               ['minimum', 'min', 'lowest', 'least'],\
-               ['count'],\
-               ['sum'],\
-               ['average', 'avg']]
 """
 agg_texts = [[],\
              ['maximum', 'the largest', 'the highest', 'the most'],\
@@ -34,14 +23,17 @@ agg_headers = [[],\
                ['count', 'games', 'times'],\
                ['sum'],\
                ['avg', 'average']]
+"""
 # Here we only use tokenizer from bert model
 model_bert, tokenizer, bert_config = get_bert('./data_and_model', 'uncased_L-12_H-768_A-12', True, False)
+"""
 for i, agg_text in enumerate(agg_texts):
     for j in range(0, len(agg_text)):
         agg_texts[i][j] = tokenizer.tokenize(agg_text[j])
 for i, agg_header in enumerate(agg_headers):
     for j in range(0, len(agg_header)):
         agg_headers[i][j] = tokenizer.tokenize(agg_header[j])
+"""
 
 def containText(text, toks):
     # if a str in question_toks
@@ -59,21 +51,21 @@ def containText(text, toks):
             return [i + j for j in range(0, len(text))]
     return [-1]
 
-def _addAggKnowledgeForOne(one_data, table, agg_idx, question_toks):
+def _addAggKnowledgeForOne(one_data, table, agg_idx, question_toks, agg_hds, agg_texts):
     # return (status, idx)
     # status: 0 -- success | 1 -- not added | 2 -- error
     # idx: index of text related to a AGG
     table_headers = table['header']
-    table_types = table['types']
-    table_rows = table['rows']
-    sel = one_data['sql']['sel']
+    # table_types = table['types']
+    # table_rows = table['rows']
+    # sel = one_data['sql']['sel']
 
     if len(question_toks) != len(one_data['bertindex_knowledge']):
         # len(knowledge) not equal to len(tokens), just pass through it
         return 2, -1 # error
     else:
         one_agg_texts = agg_texts[agg_idx] # one AGG text to a AGG OP
-        one_agg_headers = agg_headers[agg_idx] # one AGG text to a AGG OP
+        one_agg_headers = agg_hds[agg_idx] # one AGG text to a AGG OP
         # if table headers contain the token, then not add it
         for one_agg_header in one_agg_headers:
             tbhtoks = []
@@ -102,7 +94,7 @@ def _addAggKnowledgeForOne(one_data, table, agg_idx, question_toks):
                 return 0, i # success
     return 1, -1 # not added
 
-def addAggKnowledge(data, tables, mode, global_stcs):
+def addAggKnowledge(data, tables, mode, agg_hds, agg_texts):
     # Here we only use tokenizer from bert model
     model_bert, tokenizer, bert_config = get_bert('./data_and_model', 'uncased_L-12_H-768_A-12', True, False)
     for i in range(0, len(data)):
@@ -111,26 +103,9 @@ def addAggKnowledge(data, tables, mode, global_stcs):
         question_toks = tokenizer.tokenize(data[i]['question'])
         table = tables[data[i]['table_id']]
         # add AGG knowledge
-        if mode == '...':
-            agg_idx = data[i]['sql']['agg']
-            if agg_idx != 0:
-                status, text_idx = _addAggKnowledgeForOne(data[i], table, agg_idx=agg_idx, question_toks=question_toks)
-                # gather statistics info
-                if status == 0: # success
-                    global_stcs[agg_idx][status][text_idx] += 1
-                else:
-                    global_stcs[agg_idx][status] += 1
-            else:
-                global_stcs[0][1] += 1
-        elif mode == 'dev' or mode == 'train':
+        if mode == 'dev' or mode == 'train' or mode =='test':
             for agg_idx in range(1, len(agg_ops)):
-                status, text_idx = _addAggKnowledgeForOne(data[i], table, agg_idx=agg_idx, question_toks=question_toks)
-                # gather statistics info
-                if status == 0: # success
-                    global_stcs[agg_idx][status][text_idx] += 1
-                    # break
-                else:
-                    global_stcs[agg_idx][status] += 1
+                status, text_idx = _addAggKnowledgeForOne(data[i], table, agg_idx, question_toks, agg_hds, agg_texts)
         else:
             print('wrong!')
             return data
@@ -199,50 +174,45 @@ def gather_info():
                             agg_toks[i][j][3] += 1
         with open('data_and_model/agg_rl_toks.json', mode='w') as f:
             json.dump([agg_toks, all_tok_freq, agg_NLQ_num], f)
+    else:
+        print('omitted, only execute gather_info when mode == train')
     
 
 def add_knlg():
     mode = 'train'
     if len(sys.argv) == 2:
         mode = sys.argv[1]
-    # load data and tables
+
+    # load dataset and gathered info
     data, tables = load_wikisql_data('./data_and_model', mode=mode, toy_model=False, toy_size=12, no_hs_tok=True)
-    # statistics: num_success[agg_texts], num_not_added, num_error
-    global_stcs = [[[0 for j in range(0, len(agg_texts[i]))], 0, 0] for i in range(0, len(agg_ops))] 
+    with open('data_and_model/agg_rl_toks.json', mode='r') as f:
+        [agg_toks, all_tok_freq, agg_NLQ_num] = json.load(f)
+    # preprocess
+    agg_texts = [[] for t in agg_ops]
+    agg_hds = [[] for t in agg_ops]
+    for i, agg_tok in enumerate(agg_toks):
+        if i == 0:
+            agg_toks[i] = []
+        else:
+            toks_texts = [tok[0] for tok in agg_tok]
+            toks_hds = [tok[0] for tok in agg_tok]
+            for j, tok in enumerate(toks_texts):
+                if prog_hodr.match(tok) != None:
+                    tok_text = 'the ' + tok
+                else:
+                    tok_text = tok
+                toks_texts[j] = tokenizer.tokenize(tok_text)
+                toks_hds[j] = tokenizer.tokenize(tok)
+            agg_texts[i] = toks_texts
+            agg_hds[i] = toks_hds + [tokenizer.tokenize(agg_ops[i])]
     # generate AGG enhanced knowledge
-    data = addAggKnowledge(data, tables, mode, global_stcs)
-    # print results
-    print_res(global_stcs)
+    data = addAggKnowledge(data, tables, mode, agg_hds, agg_texts)
     # save enhanced knowledge
     with jsonlines.open('./data_and_model/' + mode + '_knowledge_agg_enhanced.jsonl', mode='w') as writer:
         writer.write_all(data)
-    # gather_info()
-
-def add_knlg_v2():
-    mode = 'train'
-    if len(sys.argv) == 2:
-        mode = sys.argv[1]
-    
-    with open('data_and_model/agg_rl_toks.json', mode='r') as f:
-        agg_rl_toks = json.load(f)[1:]
-    data, tables = load_wikisql_data('./data_and_model', mode=mode, toy_model=False, toy_size=12, no_hs_tok=True)
-
-    for data_idx, one_data in enumerate(data):
-        q_toks = tokenizer.tokenize(one_data['question'])
-        table = tables[one_data['table_id']]
-        if len(one_data['bertindex_knowledge']) != len(q_toks):
-            continue
-        for i, q_tok in enumerate(q_toks):
-            for j, agg_rl_tok in enumerate(agg_rl_toks):
-                if q_tok in agg_rl_tok:
-                    one_data['bertindex_knowledge'][i] = 5
-    with jsonlines.open('./data_and_model/' + mode + '_knowledge_agg_enhanced.jsonl', mode='w') as writer:
-        writer.write_all(data)
-    print(agg_rl_toks)
 
 if __name__ == "__main__":
-    # add_knlg()
     gather_info()
-    # print('gather info finished!')
-    # add_knlg_v2()
-    # print('add enhanced knowledge finished!')
+    print('\033[1;31m gather info finished! \033[0m')
+    add_knlg()
+    print('\033[1;31m add enhanced knowledge finished! \033[0m')

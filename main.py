@@ -1,3 +1,4 @@
+from transformers import get_scheduler
 from functions import *
 
 if __name__ == '__main__':
@@ -39,7 +40,8 @@ if __name__ == '__main__':
 
     ## 5. Get optimizers
     if args.do_train == 1:
-        opt, opt_bert = get_opt(args, model, model_bert, args.fine_tune)
+        opt, opt_bert = get_opt(args.lr, args.lr_bert, model, model_bert, args.fine_tune)
+        scheduler, scheduler_bert = get_scheduler(opt, opt_bert)
 
         ## 6. Train
         acc_lx_t_best = -1
@@ -66,6 +68,8 @@ if __name__ == '__main__':
                                              path_db=path_wikisql,
                                              dset_name='train',
                                              train_size=args.train_size)
+            scheduler.step()
+            scheduler_bert.step()
             if acc_train!=None:
               print_result(epoch, acc_train, 'train')
             # check DEV
@@ -81,9 +85,9 @@ if __name__ == '__main__':
                                                       detail=False,
                                                       path_db=path_wikisql,
                                                       st_pos=0,
-                                                      dset_name='dev', EG=args.EG,
+                                                      dset_name='test', EG=args.EG,
                                                       test_size=args.test_size)
-            print_result(epoch, acc_dev, 'dev')
+            print_result(epoch, acc_dev, 'test')
 
             # 保存结果用于绘图
             save_epoch_for_plot(results_for_plot, acc_train, acc_dev)
@@ -118,9 +122,9 @@ if __name__ == '__main__':
                                                   detail=False,
                                                   path_db=path_wikisql,
                                                   st_pos=0,
-                                                  dset_name='dev', EG=args.EG,
+                                                  dset_name='test', EG=args.EG,
                                                   test_size=args.test_size)
-        print_result(0, acc_dev, 'dev')
+        print_result(0, acc_dev, 'test')
 
     if args.do_infer:
         # To use recent corenlp: https://github.com/stanfordnlp/python-stanford-corenlp

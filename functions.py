@@ -5,6 +5,7 @@
 
 
 import os, sys, argparse, re, json
+from tabnanny import verbose
 
 # from matplotlib.pylab import *
 import matplotlib.pyplot as plt
@@ -138,19 +139,24 @@ def get_bert(BERT_PT_PATH, bert_type, do_lower_case, no_pretraining):
     return model_bert, tokenizer, bert_config
 
 
-def get_opt(args, model, model_bert, fine_tune):
+def get_opt(lr, lr_bert, model, model_bert, fine_tune):
     if fine_tune:
         opt = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
-                               lr=args.lr, weight_decay=0)
+                               lr=lr, weight_decay=0)
 
         opt_bert = torch.optim.Adam(filter(lambda p: p.requires_grad, model_bert.parameters()),
-                                    lr=args.lr_bert, weight_decay=0)
+                                    lr=lr_bert, weight_decay=0)
     else:
         opt = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
-                               lr=args.lr, weight_decay=0)
+                               lr=lr, weight_decay=0)
         opt_bert = None
 
     return opt, opt_bert
+
+def get_scheduler(opt, opt_bert):
+    scheduler = torch.optim.lr_scheduler.StepLR(opt, 5, gamma=0.2, last_epoch=-1, verbose=False)
+    scheduler_bert = torch.optim.lr_scheduler.StepLR(opt, 5, gamma=0.2, last_epoch=-1, verbose=False)
+    return scheduler, scheduler_bert
 
 
 def get_models(args, BERT_PT_PATH, trained=False, path_model_bert=None, path_model=None):
@@ -225,7 +231,6 @@ def get_models(args, BERT_PT_PATH, trained=False, path_model_bert=None, path_mod
 def get_data(path_wikisql, args):
     train_data, train_table, dev_data, dev_table, _, _ = load_wikisql(path_wikisql, args.toy_model, args.toy_size, no_w2i=True, no_hs_tok=True, agg_enhanced=args.agg_enhanced)
     train_loader, dev_loader = get_loader_wikisql(train_data, dev_data, args.bS, shuffle_train=True)
-
     return train_table, dev_table, train_loader, dev_loader
 
 
